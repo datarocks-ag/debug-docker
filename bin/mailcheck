@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""mailcheck — log into an IMAP or POP3 mailbox and browse it read-only.
+
+Examples:
+  mailcheck imap mail.example.com -u alice              # list folders + counts
+  mailcheck imap mail.example.com -u alice -f INBOX -n 20   # last 20 headers
+  mailcheck imap mail.example.com -u alice -f INBOX --read 42  # print message 42
+  mailcheck pop3 mail.example.com -u alice -n 10
+  mailcheck imap host --port 143 --starttls -u alice
+
+The password is read from $MAIL_PASSWORD or prompted. IMAP folders are
+opened read-only (EXAMINE) and POP3 never issues DELE, so nothing changes
+on the server.
+"""
+import argparse
+import email
+import email.header
+import email.policy
+import getpass
+import imaplib
+import os
+import poplib
+import ssl
+import sys
+
+
+def decode(value):
+    if value is None:
+        return ""
+    return str(email.header.make_header(email.header.decode_header(value)))
+
+
+def summary_line(msg_id, raw):
+    msg = email.message_from_bytes(raw, policy=email.policy.compat32)
+    return f"{msg_id:>6}  {decode(msg['Date'])[:31]:31}  {decode(msg['From'])[:30]:30}  {decode(msg['Subject'])[:60]}"
+
+
+def print_message(raw):
+    msg = email.message_from_bytes(raw, policy=email.policy.default)
+    for header in ("From", "To", "Cc", "Date", "Subject", "Message-ID"):
+        if msg[header]:
+            print(f"{header}: {msg[header]}")
+    print()
+    body = msg.get_body(preferencelist=("plain", "html"))
+    print(body.get_content() if body else "(no text body)")
+    attachments = [part.get_filename() for part in msg.iter_attachments()]
+    if attachments:
+        print("\nAttachments:", ", ".join(a or "(unnamed)" for a in attachments))
+
+
+def tls_context(args):
+    ctx = ssl.create_default_context()
+    if args.insecure:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
+def run_imap(args, password):
+    ctx = tls_context(args)
+    if args.starttls or args.plain:
+        conn = imaplib.IMAP4(args.host, args.port or 143)
+        if args.starttls:
+            conn.starttls(ssl_context=ctx)
+    else:
+        conn = imaplib.IMAP4_SSL(args.host, args.port or 993, ssl_context=ctx)
+    print(f"server capabilities: {' '.join(conn.capabilities)}", file=sys.stderr)
+    conn.login(args.user, password)
+
+    if args.folder is None:
+        _, folders = conn.list()
+        for line in folders:
+            name = line.decode().rsplit(' "/" ', 1)[-1].rsplit(' "." ', 1)[-1]
+            status, data = conn.status(name, "(MESSAGES UNSEEN)")
+            counts = data[0].decode() if status == "OK" else "(n/a)"
+            print(counts)
+        conn.logout()
+        return
+
+    status, data = conn.select(f'"{args.folder}"', readonly=True)
+    if status != "OK":
+        sys.exit(f"cannot open folder {args.folder}: {data}")
+    if args.read:
+        _, data = conn.fetch(args.read, "(BODY.PEEK[])")
+        print_message(data[0][1])
+    else:
+        _, data = conn.search(None, "ALL")
+        ids = data[0].split()[-args.n:]
+        for msg_id in reversed(ids):
+            _, hdr = conn.fetch(msg_id, "(BODY.PEEK[HEADER.FIELDS (DATE FROM SUBJECT)])")
+            print(summary_line(msg_id.decode(), hdr[0][1]))
+    conn.logout()
+
+
+def run_pop3(args, password):
+    ctx = tls_context(args)
+    if args.starttls or args.plain:
+        conn = poplib.POP3(args.host, args.port or 110)
+        if args.starttls:
+            conn.stls(context=ctx)
+    else:
+        conn = poplib.POP3_SSL(args.host, args.port or 995, context=ctx)
+    print(f"server greeting: {conn.getwelcome().decode()}", file=sys.stderr)
+    conn.user(args.user)
+    conn.pass_(password)
+    count, size = conn.stat()
+    print(f"{count} messages, {size} bytes")
+    if args.read:
+        _, lines, _ = conn.retr(int(args.read))
+        print_message(b"\r\n".join(lines))
+    else:
+        for msg_num in range(count, max(count - args.n, 0), -1):
+            _, lines, _ = conn.top(msg_num, 0)
+            print(summary_line(str(msg_num), b"\r\n".join(lines)))
+    conn.quit()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("protocol", choices=["imap", "pop3"])
+    parser.add_argument("host")
+    parser.add_argument("-u", "--user", required=True)
+    parser.add_argument("--port", type=int)
+    parser.add_argument("-f", "--folder", help="IMAP folder to list (omit to list folders)")
+    parser.add_argument("-n", type=int, default=10, help="number of latest messages to list")
+    parser.add_argument("--read", help="message id/number to print in full")
+    parser.add_argument("--starttls", action="store_true", help="plain port + STARTTLS")
+    parser.add_argument("--plain", action="store_true", help="no TLS at all (debug only)")
+    parser.add_argument("-k", "--insecure", action="store_true", help="skip certificate verification")
+    args = parser.parse_args()
+
+    password = os.environ.get("MAIL_PASSWORD") or getpass.getpass(f"password for {args.user}: ")
+    try:
+        (run_imap if args.protocol == "imap" else run_pop3)(args, password)
+    except (imaplib.IMAP4.error, poplib.error_proto, ssl.SSLError, OSError) as exc:
+        sys.exit(f"{args.protocol} error: {exc}")
+
+
+if __name__ == "__main__":
+    main()

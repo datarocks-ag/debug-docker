@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# checkssl — quick TLS endpoint / certificate file inspection.
+#
+# Usage:
+#   checkssl <host>[:port] [-s|--starttls proto] [-n|--sni name] [-c|--ca file]
+#   checkssl <file.pem|.crt|.der|.p12|.pfx>
+#
+# starttls protos: smtp, imap, pop3, ftp, xmpp, postgres, mysql, ldap, ...
+# Exit code: 0 = chain verified & not expired, 1 = problem, 2 = usage error.
+set -euo pipefail
+
+usage() { sed -n '2,10s/^# \{0,1\}//p' "$0"; exit 2; }
+
+[[ $# -ge 1 && $1 != -h && $1 != --help ]] || usage
+target=$1; shift
+starttls=""; sni=""; cafile=""
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -s|--starttls) starttls=$2; shift 2 ;;
+    -n|--sni)      sni=$2; shift 2 ;;
+    -c|--ca)       cafile=$2; shift 2 ;;
+    -h|--help)     usage ;;
+    *) echo "unknown option: $1" >&2; usage ;;
+  esac
+done
+
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+
+print_cert() {
+  openssl x509 -in "$1" -noout \
+    -subject -issuer -serial -startdate -enddate -fingerprint -sha256 \
+    -ext subjectAltName,keyUsage,extendedKeyUsage 2>/dev/null | sed 's/^/  /'
+  local end days
+  end=$(openssl x509 -in "$1" -noout -enddate | cut -d= -f2)
+  days=$(( ($(date -d "$end" +%s) - $(date +%s)) / 86400 ))
+  echo "  days left: $days"
+  (( days >= 0 ))
+}
+
+# --- local file mode -------------------------------------------------------
+if [[ -f $target ]]; then
+  case ${target,,} in
+    *.p12|*.pfx)
+      read -rsp "PKCS#12 password (empty for none): " pw; echo
+      openssl pkcs12 -in "$target" -nokeys -passin "pass:$pw" -out "$tmp/cert.pem" ;;
+    *)
+      openssl x509 -in "$target" -out "$tmp/cert.pem" 2>/dev/null \
+        || openssl x509 -inform der -in "$target" -out "$tmp/cert.pem" ;;
+  esac
+  echo "== $target"
+  print_cert "$tmp/cert.pem"
+  exit
+fi
+
+# --- remote endpoint mode --------------------------------------------------
+host=${target%:*}
+port=${target##*:}
+[[ $host == "$port" ]] && port=443
+sni=${sni:-$host}
+
+args=(-connect "$host:$port" -servername "$sni" -showcerts -verify_return_error)
+[[ -n $starttls ]] && args+=(-starttls "$starttls")
+[[ -n $cafile ]] && args+=(-CAfile "$cafile")
+
+status=0
+openssl s_client "${args[@]}" </dev/null >"$tmp/out" 2>&1 || status=1
+
+if ! grep -q 'BEGIN CERTIFICATE' "$tmp/out"; then
+  echo "!! no certificate received from $host:$port" >&2
+  sed 's/^/   /' "$tmp/out" >&2
+  exit 1
+fi
+
+# Split the presented chain into one file per certificate.
+awk -v dir="$tmp" '/BEGIN CERT/{n++} n{print > (dir "/chain" n ".pem")} /END CERT/{n=n}' "$tmp/out"
+
+echo "== $host:$port (SNI: $sni${starttls:+, STARTTLS: $starttls})"
+grep -E '^(New|Protocol|Cipher|Verify return code|Verification)' "$tmp/out" | sort -u | sed 's/^/  /'
+
+i=0
+for cert in "$tmp"/chain*.pem; do
+  echo; echo "-- certificate #$i"
+  print_cert "$cert" || status=1
+  i=$((i + 1))
+done
+
+echo
+if openssl x509 -in "$tmp/chain1.pem" -noout -checkhost "$sni" | grep -q 'does match'; then
+  echo "hostname '$sni': OK"
+else
+  echo "hostname '$sni': MISMATCH"; status=1
+fi
+[[ $status -eq 0 ]] && echo "RESULT: OK" || echo "RESULT: PROBLEM (see above)"
+exit $status
