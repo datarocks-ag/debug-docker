@@ -41,3 +41,12 @@ mailcheck --help >/dev/null
 { checkssl --help || true; } | grep -q Usage || { echo "checkssl --help broken" >&2; exit 1; }
 echo "smoke test passed: $NETDEBUG_VARIANT variant, ${#tools[@]} tools"
 EOF
+
+# An arbitrary non-root UID must get the shell config, a writable HOME and workdir.
+docker run --rm -u 12345:0 "$image" bash -ic '
+  set -e
+  type tools >/dev/null
+  touch "$HOME/.probe" ./.probe
+  echo "non-root shell ok (HOME=$HOME, cwd=$PWD)"
+' 2>/dev/null | tail -1 | grep 'non-root shell ok' \
+  || { echo "non-root shell check failed" >&2; exit 1; }

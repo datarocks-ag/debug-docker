@@ -87,7 +87,9 @@ RUN set -eux; \
 COPY --chmod=0755 bin/ /usr/local/bin/
 COPY rootfs/ /
 
-WORKDIR /root
+# World-writable (sticky) so the image is usable as any UID, not just root.
+RUN install -d -m 1777 /work
+WORKDIR /work
 ENV NETDEBUG_VARIANT=slim
 # Idle by default so it can run as a Deployment/Pod and be `kubectl exec`'d into.
 CMD ["sleep", "infinity"]
