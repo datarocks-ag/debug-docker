@@ -68,15 +68,21 @@ RUN set -eux; \
       *) echo "unsupported arch ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     ARCH="${TARGETARCH:-amd64}"; \
-    curl -fsSLo /usr/local/bin/yq \
+    # Download to a file (not curl | tar) so a truncated transfer is retried
+    # instead of surfacing as a corrupt archive.
+    fetch() { curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$1" "$2"; }; \
+    fetch /usr/local/bin/yq \
       "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${ARCH}"; \
-    curl -fsSL "https://github.com/microsoft/go-sqlcmd/releases/download/${SQLCMD_VERSION}/sqlcmd-linux-${ARCH}.tar.bz2" \
-      | tar -xjf - -C /usr/local/bin sqlcmd; \
-    curl -fsSL "https://github.com/fullstorydev/grpcurl/releases/download/v${GRPCURL_VERSION}/grpcurl_${GRPCURL_VERSION}_linux_${GRPC_ARCH}.tar.gz" \
-      | tar -xzf - -C /usr/local/bin grpcurl; \
-    curl -fsSLo /usr/local/bin/websocat \
+    fetch /tmp/sqlcmd.tar.bz2 \
+      "https://github.com/microsoft/go-sqlcmd/releases/download/${SQLCMD_VERSION}/sqlcmd-linux-${ARCH}.tar.bz2"; \
+    tar -xjf /tmp/sqlcmd.tar.bz2 -C /usr/local/bin sqlcmd; \
+    fetch /tmp/grpcurl.tar.gz \
+      "https://github.com/fullstorydev/grpcurl/releases/download/v${GRPCURL_VERSION}/grpcurl_${GRPCURL_VERSION}_linux_${GRPC_ARCH}.tar.gz"; \
+    tar -xzf /tmp/grpcurl.tar.gz -C /usr/local/bin grpcurl; \
+    rm /tmp/sqlcmd.tar.bz2 /tmp/grpcurl.tar.gz; \
+    fetch /usr/local/bin/websocat \
       "https://github.com/vi/websocat/releases/download/${WEBSOCAT_VERSION}/websocat.${WS_ARCH}-unknown-linux-musl"; \
-    curl -fsSLo /usr/local/bin/kubectl \
+    fetch /usr/local/bin/kubectl \
       "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl"; \
     chmod 0755 /usr/local/bin/*; \
     kubectl completion bash > /etc/bash_completion.d/kubectl; \
