@@ -7,10 +7,15 @@
 # rclone), tshark and the DB clients are all first-class packages here,
 # while on Alpine several of them are missing or musl-flaky.
 #
+# Targets:
+#   slim  everything except tshark
+#   full  slim + tshark (default)
+#
 # Build (multi-arch):
 #   docker buildx build --platform linux/amd64,linux/arm64 -t netdebug:latest .
+#   docker buildx build --target slim -t netdebug:slim .
 
-FROM debian:trixie-slim
+FROM debian:trixie-slim AS slim
 
 ARG TARGETARCH
 ARG YQ_VERSION=v4.54.1
@@ -23,9 +28,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     TERM=xterm-256color
 
-# tshark asks whether non-root users may capture; answer non-interactively.
-RUN echo "wireshark-common wireshark-common/install-setuid boolean false" | debconf-set-selections
-
 RUN apt-get update && apt-get install -y --no-install-recommends \
       # --- base / shell ergonomics ---
       ca-certificates bash bash-completion less vim-nox tmux tree file \
@@ -36,7 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       curl wget httpie \
       # --- network diagnostics ---
       iproute2 iputils-ping iputils-arping iputils-tracepath traceroute \
-      tcptraceroute mtr-tiny netcat-openbsd socat ncat nmap tcpdump tshark \
+      tcptraceroute mtr-tiny netcat-openbsd socat ncat nmap tcpdump \
       iperf3 ethtool conntrack iptables nftables ipcalc whois \
       # --- DNS ---
       bind9-dnsutils knot-dnsutils ldnsutils \
@@ -86,5 +88,16 @@ COPY --chmod=0755 bin/ /usr/local/bin/
 COPY rootfs/ /
 
 WORKDIR /root
+ENV NETDEBUG_VARIANT=slim
 # Idle by default so it can run as a Deployment/Pod and be `kubectl exec`'d into.
 CMD ["sleep", "infinity"]
+
+
+FROM slim AS full
+
+# tshark asks whether non-root users may capture; answer non-interactively.
+RUN echo "wireshark-common wireshark-common/install-setuid boolean false" | debconf-set-selections \
+    && apt-get update && apt-get install -y --no-install-recommends tshark \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV NETDEBUG_VARIANT=full

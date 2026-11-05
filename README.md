@@ -3,10 +3,18 @@
 Debug toolbox image for networks, TLS, mail, databases and storage in
 Kubernetes and Linux PaaS. Based on `debian:trixie-slim`, for amd64 and arm64.
 
+## Variants
+
+| Tag | Target | Contents |
+|---|---|---|
+| `latest`, `sha-…`, `1.2.3` | `full` | everything |
+| `latest-slim`, `sha-…-slim`, `1.2.3-slim` | `slim` | everything except `tshark` (use `tcpdump -w` and open the capture elsewhere) |
+
 ## Build
 
 ```bash
-docker build -t netdebug:latest .
+docker build -t netdebug:latest .                       # full
+docker build --target slim -t netdebug:slim .           # slim
 docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/datarocks-ag/debug-docker:latest --push .
 ```
 
@@ -16,11 +24,12 @@ Check that every tool is present:
 
 ```bash
 test/smoke.sh netdebug:latest
+test/smoke.sh netdebug:slim
 ```
 
-CI ([.github/workflows/image.yml](.github/workflows/image.yml)) runs the smoke test on every PR.
-Pushes to `main` publish `ghcr.io/datarocks-ag/debug-docker:latest` and `:sha-<sha>` for amd64 and arm64.
-`v*` tags also publish semver tags.
+CI ([.github/workflows/image.yml](.github/workflows/image.yml)) runs the smoke test for both variants on every PR.
+Pushes to `main` publish `latest`/`latest-slim` and `sha-<sha>`/`sha-<sha>-slim` for amd64 and arm64.
+`v*` tags also publish semver tags (`1.2.3`, `1.2.3-slim`, …).
 
 ## Run
 
@@ -99,6 +108,30 @@ mount -t cifs //server/share /mnt -o username=user
 lftp sftp://user@host; smbclient //server/share -U user
 ```
 
+## Mount permissions
+
+A FUSE mount needs two things that containers don't get by default:
+
+1. **The `/dev/fuse` device.** It isn't in the container, and the device cgroup blocks access to it.
+2. **`CAP_SYS_ADMIN`** to call `mount(2)`. On AppArmor hosts (Ubuntu and similar), the `docker-default`
+   profile also blocks mounts.
+
+NFS and CIFS are kernel mounts. They need only `CAP_SYS_ADMIN`, but they don't work in a user namespace.
+
+Docker can grant these narrowly without `--privileged`:
+
+```bash
+docker run --rm -it --cap-add SYS_ADMIN --device /dev/fuse \
+  --security-opt apparmor=unconfined netdebug bash   # apparmor flag only on AppArmor hosts
+```
+
+A Kubernetes pod spec has no field for devices, so `privileged: true` is the practical choice there.
+The alternative is a device plugin that exposes `/dev/fuse` as a resource (for example
+smarter-device-manager), plus `capabilities.add: [SYS_ADMIN]` and an unconfined AppArmor profile.
+
+If you only need to read or copy data, you don't need a mount at all, and the client tools work
+unprivileged: `rclone ls|copy|cat`, `lftp`, `smbclient`, `sftp`.
+
 ## Notes
 
 - **`yq` vs `xq`:** `yq` on PATH is mikefarah/yq (`/usr/local/bin`). The jq-wrapper
@@ -108,5 +141,5 @@ lftp sftp://user@host; smbclient //server/share -U user
   and is mostly compatible with the classic `sqlcmd` flags.
 - **Root user:** the image runs as root so capture and mount tools work. On clusters
   that enforce `runAsNonRoot`, most of the tools still work as an arbitrary UID.
-- **Image size:** about 900 MB. Most of it comes from tshark, the DB clients and
-  testssl.sh. To make it smaller, remove `tshark`, `nmap` and `rclone` first.
+- **Image size:** `full` is about 970 MB and `slim` about 820 MB; tshark alone adds about 150 MB.
+  Most of the rest is the DB clients, rclone and kubectl.

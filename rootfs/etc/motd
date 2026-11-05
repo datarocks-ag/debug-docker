@@ -4,7 +4,8 @@
   TLS      checkssl  openssl  testssl.sh  sslscan  gnutls-cli
   HTTP     curl  wget  http(ie)  grpcurl  websocat
   NET      ip  ss  ping  mtr  traceroute  tcptraceroute  nc  ncat  socat
-           nmap  tcpdump  tshark  iperf3  conntrack  iptables  nft  ethtool
+           nmap  tcpdump  tshark (full only)  iperf3  conntrack  iptables  nft
+           ethtool
   DNS      dig  nslookup  host  kdig (DoT/DoH)  drill  whois
   REMOTE   ssh  sshpass  telnet  rsync  lftp  ftp  smbclient
   MAIL     mailcheck (imap/pop3)  neomutt  swaks (smtp)
