@@ -125,9 +125,10 @@ docker run --rm -it --cap-add SYS_ADMIN --device /dev/fuse \
   --security-opt apparmor=unconfined netdebug bash   # apparmor flag only on AppArmor hosts
 ```
 
-A Kubernetes pod spec has no field for devices, so `privileged: true` is the practical choice there.
-The alternative is a device plugin that exposes `/dev/fuse` as a resource (for example
-smarter-device-manager), plus `capabilities.add: [SYS_ADMIN]` and an unconfined AppArmor profile.
+A Kubernetes pod spec has no field for devices. To get FUSE in a pod without `privileged: true`, use
+a `/dev/fuse` device plugin together with user namespaces (`hostUsers: false`).
+[docs/fuse-unprivileged.md](docs/fuse-unprivileged.md) covers this step by step, and
+[k8s/netdebug-fuse.yaml](k8s/netdebug-fuse.yaml) is a ready-made pod.
 
 If you only need to read or copy data, you don't need a mount at all, and the client tools work
 unprivileged: `rclone ls|copy|cat`, `lftp`, `smbclient`, `sftp`.
