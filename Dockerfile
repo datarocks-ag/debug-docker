@@ -69,8 +69,9 @@ RUN set -eux; \
     esac; \
     ARCH="${TARGETARCH:-amd64}"; \
     # Download to a file (not curl | tar) so a truncated transfer is retried
-    # instead of surfacing as a corrupt archive.
-    fetch() { curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$1" "$2"; }; \
+    # instead of surfacing as a corrupt archive. No --retry-delay: curl's
+    # exponential backoff (1s..128s) rides out multi-minute GitHub 5xx spells.
+    fetch() { curl -fsSL --retry 8 --retry-all-errors --retry-max-time 300 -o "$1" "$2"; }; \
     fetch /usr/local/bin/yq \
       "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${ARCH}"; \
     fetch /tmp/sqlcmd.tar.bz2 \
