@@ -1,0 +1,39 @@
+# FUSE without privileged: true. Prerequisites and background:
+# docs/fuse-unprivileged.md
+#   - /dev/fuse exposed by a device plugin as squat.ai/fuse
+#   - namespace Pod Security enforce=privileged (SYS_ADMIN isn't in baseline)
+#   - Kubernetes >= 1.33 with user namespaces, Linux >= 6.3 nodes
+#
+#   kubectl apply -n <ns> -f k8s/netdebug-fuse.yaml
+#   kubectl exec -it -n <ns> netdebug-fuse -- bash
+apiVersion: v1
+kind: Pod
+metadata:
+  name: netdebug-fuse
+  labels:
+    app.kubernetes.io/name: netdebug
+spec:
+  hostUsers: false
+  automountServiceAccountToken: false
+  terminationGracePeriodSeconds: 1
+  containers:
+    - name: netdebug
+      image: ghcr.io/datarocks-ag/debug-docker:latest-slim
+      imagePullPolicy: Always
+      stdin: true
+      tty: true
+      securityContext:
+        runAsUser: 0
+        allowPrivilegeEscalation: false
+        capabilities:
+          add: ["SYS_ADMIN"]
+        appArmorProfile:
+          type: Unconfined
+        seccompProfile:
+          type: RuntimeDefault
+      resources:
+        requests: { cpu: 10m, memory: 32Mi }
+        limits:
+          cpu: "1"
+          memory: 512Mi
+          squat.ai/fuse: 1

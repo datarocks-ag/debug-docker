@@ -1,0 +1,46 @@
+# Unprivileged debug pod: everything except packet capture, raw sockets
+# beyond NET_RAW, and FUSE/NFS/CIFS mounts.
+#   kubectl apply -n <ns> -f k8s/netdebug.yaml
+#   kubectl exec -it -n <ns> netdebug -- bash
+apiVersion: v1
+kind: Pod
+metadata:
+  name: netdebug
+  labels:
+    app.kubernetes.io/name: netdebug
+spec:
+  automountServiceAccountToken: false
+  terminationGracePeriodSeconds: 1
+  containers:
+    - name: netdebug
+      image: ghcr.io/datarocks-ag/debug-docker:latest
+      imagePullPolicy: Always
+      stdin: true
+      tty: true
+      securityContext:
+        capabilities:
+          add: ["NET_RAW"]      # ping, traceroute, nmap SYN scans
+      resources:
+        requests: { cpu: 10m, memory: 32Mi }
+        limits: { cpu: "1", memory: 512Mi }
+---
+# Privileged variant: tcpdump/tshark on the pod network, s3fs/sshfs/rclone
+# mount, NFS and CIFS mounts. Needs a namespace whose Pod Security admits
+# "privileged" — only use it where you're allowed to.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: netdebug-privileged
+  labels:
+    app.kubernetes.io/name: netdebug
+spec:
+  automountServiceAccountToken: false
+  terminationGracePeriodSeconds: 1
+  containers:
+    - name: netdebug
+      image: ghcr.io/datarocks-ag/debug-docker:latest
+      imagePullPolicy: Always
+      stdin: true
+      tty: true
+      securityContext:
+        privileged: true        # exposes /dev/fuse, allows mount(2), NET_ADMIN for capture
